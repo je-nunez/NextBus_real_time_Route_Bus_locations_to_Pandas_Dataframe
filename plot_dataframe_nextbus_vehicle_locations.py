@@ -163,7 +163,8 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
     # "&markers=color:green%7C40.718217,-73.998284"
     # "&markers=color:green%7C40.718217,-73.998284"
 
-    color_palette = ["green", "red", "blue", "yellow", "orange"]
+    color_palette = ["green", "red", "blue", "yellow", "orange",
+                     "brown", "purple", "gray", "white"]
 
     # note that the parser of the NextBus real-time vehicle location does not
     # return 'NA' as the counterpart of this script in R, but returns the
@@ -171,14 +172,32 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
     # that NextBus never returns a direction_tag with value 'UNKNOWN' -FIXME)
 
     unique_dir_tags = pd.unique(nextbus_df.dirTag.ravel())
+    color_legend = {}
 
     # build the sequence of Markers points in the Google Maps
     for a_dir_tag_idx in range(len(unique_dir_tags)):
         # find the NextBus vehicles in this data frame with that dir tag
         a_dir_tag = unique_dir_tags[a_dir_tag_idx]
         color = color_palette[a_dir_tag_idx % len(color_palette)]
+
+        # Build the legend for this color to this direction of the route
+        if a_dir_tag_idx < len(color_palette):
+            color_legend[color] = a_dir_tag
+        else:
+            # a_dir_tag_idx >= len(color_palette): there are more directions
+            # than colors: print a warning only for the first occurrence when
+            # it is noticed this case
+            if a_dir_tag_idx == len(color_palette):
+                sys.stderr.write("WARNING: More directions in route: " +
+                                 "{} than colors to plot them: {}".\
+                                   format(len(unique_dir_tags),
+                                          len(color_palette)) +
+                                 "\n"
+                                )
+
+        # Build the Google Map marker for this direction of the transit route
         marker_for_this_dir_tag = "markers=color:{}%7Csize=tiny%7Clabel:{}".\
-                                  format(color, a_dir_tag.upper())
+                                  format(color, a_dir_tag_idx)
 
         for dummy_index, row in nextbus_df[nextbus_df.dirTag == a_dir_tag].\
                                     iterrows():
@@ -206,7 +225,23 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
         else:
             gmaps_markers = marker_for_this_dir_tag
 
-    return gmaps_markers
+    return (gmaps_markers, color_legend)
+
+
+def build_legend_colors_to_directs(color_legend):
+    """Returns a set of matplotlib legend lines and texts according to the
+    mapping in the dictionary 'color_legend'."""
+
+    import matplotlib.lines as mlines
+
+    legend_lines = []
+    for used_color in color_legend:
+        direction_route = color_legend[used_color]
+        legend_line = mlines.Line2D([], [], linestyle='-', marker=' ',
+                                    color=used_color, label=direction_route)
+        legend_lines.append(legend_line)
+
+    return legend_lines
 
 
 def gmap_nextbus_dataframe(nextbus_df, containing_geom=None,
@@ -219,7 +254,8 @@ def gmap_nextbus_dataframe(nextbus_df, containing_geom=None,
     centr_long = (min(nextbus_df.lon) + max(nextbus_df.lon)) / 2
     centr_lat = (min(nextbus_df.lat) + max(nextbus_df.lat)) / 2
 
-    gmaps_markers = get_gmap_markers_for_dataframe(nextbus_df, containing_geom)
+    gmaps_markers, color_legend = \
+               get_gmap_markers_for_dataframe(nextbus_df, containing_geom)
 
     gmap_url = ("https://maps.googleapis.com/maps/api/staticmap?"
                 "center={:7.7f},{:7.7f}&format=png&zoom=12"
@@ -239,6 +275,8 @@ def gmap_nextbus_dataframe(nextbus_df, containing_geom=None,
         sys.stderr.write("ERROR: Exception retrieving Google Maps: {}\n".
                          format(gmap_url))
         sys.stderr.write('ERROR info: {}: {}\n'.format(exc_type, exc_value))
+
+    dummy_legend_lines = build_legend_colors_to_directs(color_legend)
 
 
 def main():

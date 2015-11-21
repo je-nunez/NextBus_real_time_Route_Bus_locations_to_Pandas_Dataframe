@@ -2,6 +2,7 @@
 
 """
 Retrieves a NextBus Vehicle Locations Feed for a route into a Panda Data frame
+and plots it geospatially using Matplotlib Basemap and Google Maps
 """
 
 import sys
@@ -148,6 +149,37 @@ def render_nextbus_dataframe(route, nextbus_df):
     # plt.legend(loc='lower center')
     plt.savefig('nextbus_vehicle_locations.png', fmt='png', dpi=600)
     # plt.show()
+    # Other components (like GMaps plotting) will also use Matplotlib, so
+    # it's better to clear the figure that Matplotlib generated
+    plt.clf()
+
+
+def get_rgb_hexad_color_palete():
+    """Returns a list of RGB values with the color palette used to plot the
+    transit vehicles returned by NextBus. Each entry returned in the color
+    palette has the RGB hexadecimal format, and without the prefix '0x' as
+    for colors in Google Maps, nor the prefix '#' for the matplotlib color.
+    Ie., the entry for blue is returned as '0000FF' and for red 'FF0000'."""
+
+    # We don't use these color names directly because their intensity might
+    # be (are) reflected diferently between between the remote server and
+    # matplotlib, and this difference in rendering a same color affects the
+    # color-legend in matplotlib. For this reason too, we don't need to use
+    # only the named colors in Google Maps but more in matplotlib, for in
+    # both cases hexadecimal RGB values are really used.
+
+    high_contrast_colors = ["green", "red", "blue", "yellow", "aqua",
+                            "brown", "gray", "honeydew", "purple",
+                            "turquoise", "magenta", "orange"]
+
+    from matplotlib.colors import ColorConverter, rgb2hex
+
+    color_converter = ColorConverter()
+    hex_color_palette = [rgb2hex(color_converter.to_rgb(cname))[1:] for \
+                         cname in high_contrast_colors]
+    # matplotlib.colors.cnames[cname] could have been used instead of rgb2hex
+
+    return hex_color_palette
 
 
 def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
@@ -160,11 +192,10 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
     gmaps_markers = ""
 
     # %7C is equal to the pipe '|' character
-    # "&markers=color:green%7C40.718217,-73.998284"
-    # "&markers=color:green%7C40.718217,-73.998284"
-
-    color_palette = ["green", "red", "blue", "yellow", "orange",
-                     "brown", "purple", "gray", "white"]
+    #    "&markers=color:green%7C40.718217,-73.998284"
+    #    "&markers=color:green%7C40.718217,-73.998284"
+    #
+    color_palette = get_rgb_hexad_color_palete()
 
     # note that the parser of the NextBus real-time vehicle location does not
     # return 'NA' as the counterpart of this script in R, but returns the
@@ -172,6 +203,7 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
     # that NextBus never returns a direction_tag with value 'UNKNOWN' -FIXME)
 
     unique_dir_tags = pd.unique(nextbus_df.dirTag.ravel())
+
     color_legend = {}
 
     # build the sequence of Markers points in the Google Maps
@@ -189,15 +221,23 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
             # it is noticed this case
             if a_dir_tag_idx == len(color_palette):
                 sys.stderr.write("WARNING: More directions in route: " +
-                                 "{} than colors to plot them: {}".\
-                                   format(len(unique_dir_tags),
-                                          len(color_palette)) +
+                                 "{} than colors to plot them: {}".
+                                 format(len(unique_dir_tags),
+                                        len(color_palette)) +
                                  "\n"
                                 )
 
         # Build the Google Map marker for this direction of the transit route
-        marker_for_this_dir_tag = "markers=color:{}%7Csize=tiny%7Clabel:{}".\
+        marker_for_this_dir_tag = "markers=color:0x{}%7Csize=tiny%7Clabel:{}".\
                                   format(color, a_dir_tag_idx)
+
+        # note that we not only select vehicles whose [dirTag == a_dir_tag],
+        # but that they furthermore satisfy the geospatial condition:
+        #        containing_geom.contains(vehicle)
+        # so there may be no vehicle in this [dirTag == a_dir_tag] in this
+        # geographical zone. Hence, the flag below is needed:
+
+        any_vehicle_satisfy_all_conds = False
 
         for dummy_index, row in nextbus_df[nextbus_df.dirTag == a_dir_tag].\
                                     iterrows():
@@ -214,42 +254,33 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
                     # location is not contained inside it: ignore this vehicle
                     continue
 
-            vehicle = "{:7.7f},{:7.7f}".format(row['lat'], row['lon'])
-            marker_for_this_dir_tag += "%7C" + vehicle
+            any_vehicle_satisfy_all_conds = True
+            # vehicle = "{:7.7f},{:7.7f}".format(row['lat'], row['lon'])
+            marker_for_this_dir_tag += "%7C{:7.7f},{:7.7f}".\
+                                           format(row['lat'], row['lon'])
 
         # sys.stderr.write("DEBUG: Google Maker for dir_tag '{}': {}\n".\
         #                    format(a_dir_tag, marker_for_this_dir_tag))
 
-        if gmaps_markers:
-            gmaps_markers += '&' + marker_for_this_dir_tag
+        if any_vehicle_satisfy_all_conds:
+            if gmaps_markers:
+                gmaps_markers += '&' + marker_for_this_dir_tag
+            else:
+                gmaps_markers = marker_for_this_dir_tag
         else:
-            gmaps_markers = marker_for_this_dir_tag
+            # no vehicle has satisfied all conditions: this color hasn't been
+            # used to plot vehicles, hence no need to have this color in legend
+            if a_dir_tag_idx < len(color_palette):
+                del color_legend[color]
 
     return (gmaps_markers, color_legend)
 
 
-def build_legend_colors_to_directs(color_legend):
-    """Returns a set of matplotlib legend lines and texts according to the
-    mapping in the dictionary 'color_legend'."""
-
-    import matplotlib.lines as mlines
-
-    legend_lines = []
-    for used_color in color_legend:
-        direction_route = color_legend[used_color]
-        legend_line = mlines.Line2D([], [], linestyle='-', marker=' ',
-                                    color=used_color, label=direction_route)
-        legend_lines.append(legend_line)
-
-    return legend_lines
-
-
-def gmap_nextbus_dataframe(nextbus_df, containing_geom=None,
-                           gmap_type='hybrid'):
-    """Plots the NextBus Vehicle Location's Panda Data frame which (optionally)
-    happen to be inside a 'containing_geom', into an image using Google Maps.
-    The type of the Google Map (hybrid, roadmap, etc) is given in the
-    'gmap_type' argument."""
+def get_gmap_url_for_dataframe(nextbus_df, containing_geom=None,
+                               gmap_type='hybrid'):
+    """Builds and returns the string with the Google Maps URL to plot the
+    transit vehicles in the Panda data frame given as argument (and which
+    vehicles optionally happen to be inside the 'containing_geom')."""
 
     centr_long = (min(nextbus_df.lon) + max(nextbus_df.lon)) / 2
     centr_lat = (min(nextbus_df.lat) + max(nextbus_df.lat)) / 2
@@ -264,19 +295,79 @@ def gmap_nextbus_dataframe(nextbus_df, containing_geom=None,
 
     # sys.stderr.write("DEBUG: Retrieving Google Maps: {}\n".format(gmap_url))
 
+    return (gmap_url, color_legend)
+
+
+def build_legend_colors_to_directs(color_legend):
+    """Returns a set of matplotlib legend lines and texts according to the
+    mapping in the dictionary 'color_legend'."""
+
+    import matplotlib.patches as mpatches
+
+    legend_items = []
+    for used_color in color_legend:
+        direction_route = color_legend[used_color]
+
+        legend_patch = mpatches.Patch(color='#' + used_color,
+                                      capstyle='round', label=direction_route)
+        legend_items.append(legend_patch)
+
+    return legend_items
+
+
+def download_and_plot_gmap(gmap_url, color_legend):
+    """Download a Google Map given its URL, plots it using Matplotlib adding a
+    legend according to the dictionary 'color_legend', and saves it into a
+    PNG image file."""
+
+    gmap_content = urllib2.urlopen(gmap_url)
+
+    axis = plt.gca()
+
+    # disable the plotting of the ticks in the Matplotlib axis
+
+    axis.get_xaxis().set_visible(False)
+    axis.get_yaxis().set_visible(False)
+
+    # axis.set_xlim(0, 1)
+    # axis.set_ylim(0, 1)
+
+    img = plt.imread(gmap_content)
+
+    plt.imshow(img)
+
+    # Get the lines for the matplotlib legend, according to the mapping in
+    # the dictionary 'color_legend'
+
+    legend_lines = build_legend_colors_to_directs(color_legend)
+
+    plt.legend(handles=legend_lines, bbox_to_anchor=(1.00, 1.00), loc=1,
+               borderaxespad=0., prop={"size": 8})
+
+    # the filename where to save the Google Maps should be provided -FIXME
+    plt.savefig('nextbus_vehicle_locations_gmaps.png', fmt='png', dpi=300)
+    plt.clf()
+
+
+def gmap_nextbus_dataframe(nextbus_df, containing_geom=None,
+                           gmap_type='hybrid'):
+    """Plots the NextBus Vehicle Location's Panda Data frame which (optionally)
+    happen to be inside a 'containing_geom', into an image using Google Maps.
+    The type of the Google Map (hybrid, roadmap, etc) is given in the
+    'gmap_type' argument."""
+
+    gmap_url, color_legend = \
+        get_gmap_url_for_dataframe(nextbus_df, containing_geom, gmap_type)
+
     try:
-        gmap_content = urllib2.urlopen(gmap_url)
-        # the filename where to save the Google Maps should be provided -FIXME
-        gmap_file = open('nextbus_vehicle_locations_gmaps.png', 'wb')
-        gmap_file.write(gmap_content.read())
-        gmap_file.close()
+
+        download_and_plot_gmap(gmap_url, color_legend)
+
     except Exception:     # pylint: disable=broad-except
         exc_type, exc_value, dummy_callstack = sys.exc_info()
         sys.stderr.write("ERROR: Exception retrieving Google Maps: {}\n".
                          format(gmap_url))
         sys.stderr.write('ERROR info: {}: {}\n'.format(exc_type, exc_value))
-
-    dummy_legend_lines = build_legend_colors_to_directs(color_legend)
 
 
 def main():

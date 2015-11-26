@@ -43,14 +43,14 @@ A sample is below:
 
 ![Toronto Transit Commission - Route 39 Finch Ave East](/nextbus_vehicle_locations_gmaps_ttc_39.png?raw=true "Toronto Transit Commission - Route 39 Finch Ave East")
 
-For the map with the real-time locations of the vehicles servicing `Los Angeles Metro, Route 20, Downtown LA - Santa Monica via Wilshire Blvd`, without a limiting area for plotting the
+For the map with the real-time locations of the vehicles servicing `Los Angeles Metro, Route 720, Downtown LA - Santa Monica - Commerce via Wilshire Blvd`, without a limiting area for plotting the
 transit buses inside it:
 
-     ./plot_dataframe_nextbus_vehicle_locations.py  lametro  20
+     ./plot_dataframe_nextbus_vehicle_locations.py  lametro  720
 
 A sample is below:
 
-![Los Angeles Metro, Route 20, Downtown LA - Santa Monica via Wilshire Blvd](/nextbus_vehicle_locations_gmaps_lametro_20.png?raw=true "Los Angeles Metro Route 20, Downtown LA - Santa Monica via Wilshire Blvd")
+![Los Angeles Metro, Route 720, Santa Monica - Commerce via Wilshire Blvd](/nextbus_vehicle_locations_gmaps_lametro_720.png?raw=true "Los Angeles Metro Route 720, Santa Monica - Commerce via Wilshire Blvd")
 
 For the map with the real-time locations of the vehicles servicing `New York City Metropolitan Transportation Authority - Bronx Bx12 Broadway Inwood - Bay Plaza`, without a limiting area:
 

@@ -18,13 +18,16 @@ from mpl_toolkits.basemap import Basemap
 
 
 def dataframe_nextbus_bus_location(agency, route,
-                                   time_window_location_change=30 * 60):
+                                   time_window_location_change=30 * 60,
+                                   containing_geom=None):
     # pylint: disable=line-too-long
     """Retrieves the data from NextBus Vehicle Locations XML API, at
 
        http://webservices.nextbus.com/service/publicXMLFeed?command=vehicleLocations&a=<agency_tag>&r=<route tag>&t=<epoch time in msec>
 
-    parses the XML, and returns a Panda Data frame with the information."""
+    parses the XML, and for those transit vehicles servicing this route which
+    are inside a 'containing_geom' in WSG84 coordinates, gathers them into a
+    Panda Data frame, returning it."""
 
     import xml.etree.ElementTree as ET
 
@@ -56,7 +59,9 @@ def dataframe_nextbus_bus_location(agency, route,
     dataframe_records = []
 
     for xml_elem in xml_doc_root:
-        elem_list = listify_nextbus_xml_elem(xml_elem)
+        # parse this NextBus vehicle, if its location is inside
+        # 'containing_geom'
+        elem_list = listify_nextbus_xml_elem(xml_elem, containing_geom)
 
         if elem_list:
             # the XML element could be parsed: then append this record to the
@@ -69,10 +74,13 @@ def dataframe_nextbus_bus_location(agency, route,
     return vehicle_locations_df
 
 
-def listify_nextbus_xml_elem(xml_elem):
+def listify_nextbus_xml_elem(xml_elem, containing_geom=None):
     """Converts a XML Element containing a NextBus Vehicle Location to a
     Python list whose elements are the attributes of that NextBus Vehicle
-    Location XML Element."""
+    Location XML Element. Returns the list, and only if this parsed NextBus
+    Vehicle is also inside a 'containing_geom' in WSG84 coordinates."""
+
+    from shapely.geometry import Point
 
     # vehicle {'lon': '-122.3925', 'secsSinceReport': '23', 'id': '6290',
     #          'routeTag': '38R', 'predictable': 'true', 'speedKmHr': '0',
@@ -91,6 +99,19 @@ def listify_nextbus_xml_elem(xml_elem):
 
     vehicle_latitude = get_float_from_xml_elem(xml_elem, 'lat')
     return_list.append(vehicle_latitude)
+
+    # check if this vehicle's position is inside the 'containing_geom'
+    # geospatial condition (use 'longitude, latitude' order as the Python
+    # Fiona module uses -we assume the WSG84 coordinate system)
+
+    if containing_geom:
+        vehicle_p = Point(vehicle_longitude, vehicle_latitude)
+        # print "Checking vehicle {} inside {}".\
+        #            format(vehicle_p.wkt, containing_geom.wkt)
+        if not containing_geom.contains(vehicle_p):
+            # there is a 'containing_geom' given and this vehicle's
+            # location is not contained inside it: ignore this vehicle
+            return None
 
     vehicle_last_updated = get_float_from_xml_elem(xml_elem, 'secsSinceReport')
     return_list.append(vehicle_last_updated)
@@ -182,12 +203,9 @@ def get_rgb_hexad_color_palete():
     return hex_color_palette
 
 
-def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
+def get_gmap_markers_for_dataframe(nextbus_df):
     """Builds and returns the string with the Google Maps markers to plot the
-    transit vehicles in the Panda data frame given as argument (and which
-    vehicles optionally happen to be inside the 'containing_geom')."""
-
-    from shapely.geometry import Point
+    transit vehicles in the Panda data frame given as argument."""
 
     gmaps_markers = ""
 
@@ -231,30 +249,9 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
         marker_for_this_dir_tag = "markers=color:0x{}%7Csize=tiny%7Clabel:{}".\
                                   format(color, a_dir_tag_idx)
 
-        # note that we not only select vehicles whose [dirTag == a_dir_tag],
-        # but that they furthermore satisfy the geospatial condition:
-        #        containing_geom.contains(vehicle)
-        # so there may be no vehicle in this [dirTag == a_dir_tag] in this
-        # geographical zone. Hence, the flag below is needed:
-
-        any_vehicle_satisfy_all_conds = False
-
         for dummy_index, row in nextbus_df[nextbus_df.dirTag == a_dir_tag].\
                                     iterrows():
-            # see if this vehicle in this direction is also within the
-            # contained geometry requested (use 'longitude, latitude' order
-            # as the Python Fiona module uses -we assume the WSG84 coordinate
-            # system)
-            if containing_geom:
-                vehicle_p = Point(row['lon'], row['lat'])
-                # print "Checking vehicle {} inside {}".\
-                #            format(vehicle_p.wkt, containing_geom.wkt)
-                if not containing_geom.contains(vehicle_p):
-                    # there is a 'containing_geom' given and this vehicle's
-                    # location is not contained inside it: ignore this vehicle
-                    continue
 
-            any_vehicle_satisfy_all_conds = True
             # vehicle = "{:7.7f},{:7.7f}".format(row['lat'], row['lon'])
             marker_for_this_dir_tag += "%7C{:7.7f},{:7.7f}".\
                                            format(row['lat'], row['lon'])
@@ -262,31 +259,22 @@ def get_gmap_markers_for_dataframe(nextbus_df, containing_geom=None):
         # sys.stderr.write("DEBUG: Google Maker for dir_tag '{}': {}\n".\
         #                    format(a_dir_tag, marker_for_this_dir_tag))
 
-        if any_vehicle_satisfy_all_conds:
-            if gmaps_markers:
-                gmaps_markers += '&' + marker_for_this_dir_tag
-            else:
-                gmaps_markers = marker_for_this_dir_tag
+        if gmaps_markers:
+            gmaps_markers += '&' + marker_for_this_dir_tag
         else:
-            # no vehicle has satisfied all conditions: this color hasn't been
-            # used to plot vehicles, hence no need to have this color in legend
-            if a_dir_tag_idx < len(color_palette):
-                del color_legend[color]
+            gmaps_markers = marker_for_this_dir_tag
 
     return (gmaps_markers, color_legend)
 
 
-def get_gmap_url_for_dataframe(nextbus_df, containing_geom=None,
-                               gmap_type='hybrid'):
+def get_gmap_url_for_dataframe(nextbus_df, gmap_type='hybrid'):
     """Builds and returns the string with the Google Maps URL to plot the
-    transit vehicles in the Panda data frame given as argument (and which
-    vehicles optionally happen to be inside the 'containing_geom')."""
+    transit vehicles in the Panda data frame given as argument."""
 
     centr_long = (min(nextbus_df.lon) + max(nextbus_df.lon)) / 2
     centr_lat = (min(nextbus_df.lat) + max(nextbus_df.lat)) / 2
 
-    gmaps_markers, color_legend = \
-               get_gmap_markers_for_dataframe(nextbus_df, containing_geom)
+    gmaps_markers, color_legend = get_gmap_markers_for_dataframe(nextbus_df)
 
     gmap_url = ("https://maps.googleapis.com/maps/api/staticmap?"
                 "center={:7.7f},{:7.7f}&format=png&zoom=12"
@@ -349,15 +337,12 @@ def download_and_plot_gmap(gmap_url, color_legend):
     plt.clf()
 
 
-def gmap_nextbus_dataframe(nextbus_df, containing_geom=None,
-                           gmap_type='hybrid'):
-    """Plots the NextBus Vehicle Location's Panda Data frame which (optionally)
-    happen to be inside a 'containing_geom', into an image using Google Maps.
-    The type of the Google Map (hybrid, roadmap, etc) is given in the
-    'gmap_type' argument."""
+def gmap_nextbus_dataframe(nextbus_df, gmap_type='hybrid'):
+    """Plots the NextBus Vehicle Location's Panda Data frame into an image
+    using Google Maps. The type of the Google Map (hybrid, roadmap, etc) is
+    given in the 'gmap_type' argument."""
 
-    gmap_url, color_legend = \
-        get_gmap_url_for_dataframe(nextbus_df, containing_geom, gmap_type)
+    gmap_url, color_legend = get_gmap_url_for_dataframe(nextbus_df, gmap_type)
 
     try:
 
@@ -435,14 +420,17 @@ def main():
     if args.map_type:
         gmap_type = args.map_type
 
-    # Query NextBus real-time vehicle location servicing a transit route and
-    # load it into a Panda data frame
-    nextbus_dataframe = dataframe_nextbus_bus_location(agency_code, bus_route)
+    # Query the changes in NextBus real-time vehicle location servicing a
+    # transit route in the last 15 minutes and whose vehicles are now inside a
+    # 'containing_geom', and load them into a Panda data frame
+    nextbus_dataframe = dataframe_nextbus_bus_location(agency_code, bus_route,
+                                                       15 * 60,
+                                                       containing_geom)
 
     # print nextbus_dataframe
 
     render_nextbus_dataframe(bus_route, nextbus_dataframe)
-    gmap_nextbus_dataframe(nextbus_dataframe, containing_geom, gmap_type)
+    gmap_nextbus_dataframe(nextbus_dataframe, gmap_type)
 
 
 def get_this_script_docstring():
